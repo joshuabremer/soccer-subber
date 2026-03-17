@@ -15,10 +15,10 @@
         --accent: #38bdf8;
         --text: #f1f5f9;
         --text-muted: #94a3b8;
-        --gk: #f59e0b;
+        --gk: #ffffff;
         --def: #3b82f6;
-        --mid: #22c55e;
-        --fwd: #ef4444;
+        --mid: #facc15;
+        --fwd: #f97316;
         --sub: #475569;
       }
 
@@ -166,7 +166,7 @@
       }
       .role-FWD {
         background: var(--fwd);
-        color: #fff;
+        color: #000;
       }
       .role-SUB {
         background: var(--sub);
@@ -487,6 +487,43 @@
         height: 8px;
         border-radius: 50%;
       }
+
+      /* ── GK Picker ── */
+      .gk-picker {
+        background: var(--surface);
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+      .gk-picker-label {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        margin-bottom: 10px;
+      }
+      .gk-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+      .gk-pill {
+        padding: 7px 14px;
+        border-radius: 20px;
+        border: 2px solid var(--surface2);
+        background: var(--surface2);
+        color: var(--text-muted);
+        font-size: 0.84rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .gk-pill.selected {
+        border-color: var(--gk);
+        background: rgba(245, 158, 11, 0.15);
+        color: var(--gk);
+      }
     </style>
   </head>
   <body>
@@ -498,6 +535,10 @@
     <main>
       <!-- Quarters list -->
       <div id="screen-quarters" class="screen active">
+        <div class="gk-picker">
+          <div class="gk-picker-label">🥅 Choose Goalkeeper</div>
+          <div class="gk-pills" id="gk-pills"></div>
+        </div>
         <button class="reshuffle-btn" onclick="reshuffle()">
           🔀 Reshuffle Lineup
         </button>
@@ -568,6 +609,7 @@
 
       let gameLineup = null; // { gk: string, quarters: Array<{name,role}[]> }
       let activeFieldQ = 0;
+      let selectedGK = null; // null = random
 
       // ──────────────────────────────────────────
       // UTILITIES
@@ -585,9 +627,8 @@
       // LINEUP GENERATION
       // ──────────────────────────────────────────
       function generateLineup() {
-        const shuffledAll = shuffle(KIDS);
-        const gk = shuffledAll[0];
-        const outfield = shuffle(shuffledAll.slice(1)); // 9 outfield kids
+        const gk = selectedGK || shuffle(KIDS)[0];
+        const outfield = shuffle(KIDS.filter((k) => k !== gk)); // 9 outfield kids
 
         // Fair bench rotation:
         // 4 quarters × 2 bench spots = 8 bench slots for 9 kids.
@@ -617,9 +658,51 @@
         return { gk, quarters };
       }
 
+      const LS_KEY = "soccer-lineup-v1";
+
+      function saveLineup() {
+        localStorage.setItem(
+          LS_KEY,
+          JSON.stringify({ gameLineup, activeFieldQ, selectedGK }),
+        );
+      }
+
+      function loadLineup() {
+        try {
+          const saved = localStorage.getItem(LS_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            gameLineup = parsed.gameLineup;
+            activeFieldQ = parsed.activeFieldQ || 0;
+            selectedGK = parsed.selectedGK || null;
+            return true;
+          }
+        } catch (e) {
+          /* ignore corrupt data */
+        }
+        return false;
+      }
+
+      function pickGK(name) {
+        selectedGK = name;
+        activeFieldQ = 0;
+        gameLineup = generateLineup();
+        saveLineup();
+        renderAll();
+      }
+
+      function renderGKPicker() {
+        const container = document.getElementById("gk-pills");
+        container.innerHTML = KIDS.map((kid) => {
+          const active = kid === gameLineup.gk;
+          return `<button class="gk-pill${active ? " selected" : ""}" onclick="pickGK('${kid}')">${kid}</button>`;
+        }).join("");
+      }
+
       function reshuffle() {
         activeFieldQ = 0;
         gameLineup = generateLineup();
+        saveLineup();
         renderAll();
       }
 
@@ -809,6 +892,7 @@
       // RENDER ALL
       // ──────────────────────────────────────────
       function renderAll() {
+        renderGKPicker();
         renderQuarters();
         renderField();
         renderGame();
@@ -816,7 +900,11 @@
       }
 
       // ── Init ──
-      reshuffle();
+      if (!loadLineup()) {
+        gameLineup = generateLineup();
+        saveLineup();
+      }
+      renderAll();
     </script>
   </body>
 </html>
