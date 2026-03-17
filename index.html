@@ -587,20 +587,30 @@
       function generateLineup() {
         const shuffledAll = shuffle(KIDS);
         const gk = shuffledAll[0];
-        const outfield = shuffledAll.slice(1); // 9 kids for 7 slots + 2 subs
+        const outfield = shuffle(shuffledAll.slice(1)); // 9 outfield kids
+
+        // Fair bench rotation:
+        // 4 quarters × 2 bench spots = 8 bench slots for 9 kids.
+        // → 8 kids sit out exactly once, 1 kid plays all 4 quarters.
+        // Build a list of 8 bench assignments (2 per quarter) and shuffle them.
+        const benchSlots = shuffle([0, 0, 1, 1, 2, 2, 3, 3]);
+        // sitOutQuarter[i] = which quarter kid i sits out (null = never sits out)
+        const sitOutQuarter = outfield.map((_, i) =>
+          i < 8 ? benchSlots[i] : null,
+        );
 
         const quarters = [];
         for (let q = 0; q < 4; q++) {
-          const order = shuffle(outfield);
+          const active = outfield.filter((_, i) => sitOutQuarter[i] !== q);
+          const benched = outfield.filter((_, i) => sitOutQuarter[i] === q);
+
+          // Randomise role assignment among the active players each quarter
+          const randomisedActive = shuffle(active);
           const lineup = [{ name: gk, role: "GK" }];
-
           OUTFIELD_SLOTS.forEach((role, i) => {
-            lineup.push({ name: order[i], role });
+            lineup.push({ name: randomisedActive[i], role });
           });
-          // remaining 2 are subs
-          lineup.push({ name: order[7], role: "SUB" });
-          lineup.push({ name: order[8], role: "SUB" });
-
+          benched.forEach((name) => lineup.push({ name, role: "SUB" }));
           quarters.push(lineup);
         }
 
