@@ -377,7 +377,34 @@
         color: var(--text-muted);
       }
 
-      /* ── Game table ── */
+      /* ── Quarter lock ── */
+      .q-lock-btn {
+        display: block;
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+        line-height: 1;
+        margin: 3px auto 0;
+        opacity: 0.45;
+        transition: opacity 0.15s;
+      }
+      .q-lock-btn.locked {
+        opacity: 1;
+      }
+
+      .badge.selected-swap {
+        outline: 2.5px solid #fff;
+        outline-offset: 2px;
+        cursor: pointer;
+      }
+      .game-table td.swappable {
+        cursor: pointer;
+      }
+      .game-table td.swap-selected {
+        background: rgba(56, 189, 248, 0.18);
+      }
+
       .table-wrap {
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
@@ -574,6 +601,58 @@
         background: rgba(245, 158, 11, 0.15);
         color: var(--gk);
       }
+
+      /* ── Check-in screen ── */
+      .checkin-count {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        font-weight: 600;
+        text-align: center;
+        margin-bottom: 14px;
+      }
+      .checkin-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .checkin-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--surface);
+        border-radius: 10px;
+        padding: 13px 16px;
+        border: 2px solid var(--surface2);
+        cursor: pointer;
+        transition:
+          border-color 0.15s,
+          background 0.15s;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .checkin-row.checked {
+        border-color: var(--accent);
+        background: rgba(56, 189, 248, 0.08);
+      }
+      .checkin-name {
+        font-weight: 600;
+        font-size: 0.95rem;
+      }
+      .checkin-num {
+        background: var(--accent);
+        color: #0f172a;
+        border-radius: 20px;
+        padding: 3px 11px;
+        font-size: 0.78rem;
+        font-weight: 700;
+      }
+      .not-enough-msg {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.88rem;
+        padding: 40px 16px;
+        line-height: 1.6;
+      }
     </style>
   </head>
   <body>
@@ -583,8 +662,19 @@
     </header>
 
     <main>
-      <!-- Quarters list -->
-      <div id="screen-quarters" class="screen active">
+      <!-- Check-in -->
+      <div id="screen-checkin" class="screen active">
+        <div id="checkin-view"></div>
+      </div>
+
+      <!-- Field view -->
+      <div id="screen-field" class="screen">
+        <div class="quarter-tabs" id="field-tabs"></div>
+        <div id="field-view"></div>
+      </div>
+
+      <!-- Full game table -->
+      <div id="screen-game" class="screen">
         <div class="cmf-picker">
           <div class="cmf-picker-label">⚡ Center Mid Eligible</div>
           <div class="cmf-pills" id="cmf-pills"></div>
@@ -596,17 +686,6 @@
         <button class="reshuffle-btn" onclick="reshuffle()">
           🔀 Reshuffle Lineup
         </button>
-        <div id="quarters-list"></div>
-      </div>
-
-      <!-- Field view -->
-      <div id="screen-field" class="screen">
-        <div class="quarter-tabs" id="field-tabs"></div>
-        <div id="field-view"></div>
-      </div>
-
-      <!-- Full game table -->
-      <div id="screen-game" class="screen">
         <div class="table-wrap">
           <div id="game-view"></div>
         </div>
@@ -619,14 +698,14 @@
     </main>
 
     <nav>
-      <button class="nav-btn active" onclick="showScreen('quarters', this)">
-        <span class="nav-icon">📋</span><span>Quarters</span>
-      </button>
-      <button class="nav-btn" onclick="showScreen('field', this)">
-        <span class="nav-icon">🏟️</span><span>Field</span>
+      <button class="nav-btn active" onclick="showScreen('checkin', this)">
+        <span class="nav-icon">✅</span><span>Check In</span>
       </button>
       <button class="nav-btn" onclick="showScreen('game', this)">
         <span class="nav-icon">📅</span><span>Game</span>
+      </button>
+      <button class="nav-btn" onclick="showScreen('field', this)">
+        <span class="nav-icon">🏟️</span><span>Field</span>
       </button>
       <button class="nav-btn" onclick="showScreen('summary', this)">
         <span class="nav-icon">📊</span><span>Summary</span>
@@ -663,6 +742,11 @@
       let centerMidAllowed = new Set(
         PLAYERS_DEFAULT.filter((p) => p.canPlayCMF).map((p) => p.name),
       );
+
+      // checkedIn: names in arrival order (first tapped = first in queue)
+      let checkedIn = [];
+      // lockedQuarters: set of quarter indices (0-3) that should not be reshuffled
+      let lockedQuarters = new Set();
 
       // ──────────────────────────────────────────
       // UTILITIES
@@ -710,12 +794,13 @@
         const remaining = shuffle([...active]);
         const result = [];
 
-        // Order: CMF (only CMF-eligible), DEF, FWD, MID (most flexible, last)
+        // Order: CMF first (most constrained), then MID so MID-lovers are
+        // reserved before DEF/FWD slots consume them, then DEF, then FWD.
         const order = [
           { role: "CMF", count: FIELD_SLOTS.CMF },
+          { role: "MID", count: FIELD_SLOTS.MID },
           { role: "DEF", count: FIELD_SLOTS.DEF },
           { role: "FWD", count: FIELD_SLOTS.FWD },
-          { role: "MID", count: FIELD_SLOTS.MID },
         ];
 
         for (const { role, count } of order) {
@@ -751,30 +836,72 @@
       }
 
       function generateLineup() {
-        const gk = selectedGK || shuffle(KIDS)[0];
-        const outfield = KIDS.filter((k) => k !== gk); // preserves json order; shuffled inside helpers
+        if (checkedIn.length < 8) return null;
+        const gk = checkedIn.includes(selectedGK) ? selectedGK : checkedIn[0];
+        const outfield = checkedIn.filter((k) => k !== gk);
         const n = outfield.length;
 
-        const sitOutSchedule = buildBenchSchedule(n); // sitOutSchedule[i] = [q,...] or null
+        // Determine which quarters need generation
+        const unlockedQs = [0, 1, 2, 3].filter((q) => !lockedQuarters.has(q));
+
+        // Seed play counts from locked quarters so FIFO queue stays fair
+        const playCount = Array(n).fill(0);
+        if (gameLineup && gameLineup.quarters) {
+          [0, 1, 2, 3]
+            .filter((q) => lockedQuarters.has(q))
+            .forEach((q) => {
+              const lockedQ = gameLineup.quarters[q];
+              if (lockedQ) {
+                outfield.forEach((name, i) => {
+                  const p = lockedQ.find((pl) => pl.name === name);
+                  if (p && p.role !== "SUB") playCount[i]++;
+                });
+              }
+            });
+        }
+
+        // Build bench schedule only for unlocked quarters
+        const sitOut = Array.from({ length: n }, () => []);
+        for (const q of unlockedQs) {
+          const benchPerQ = n - 7;
+          if (benchPerQ > 0) {
+            const sorted = [...Array(n).keys()].sort((a, b) =>
+              playCount[a] !== playCount[b]
+                ? playCount[a] - playCount[b]
+                : a - b,
+            );
+            sorted.slice(0, 7).forEach((i) => playCount[i]++);
+            sorted.slice(7).forEach((i) => sitOut[i].push(q));
+          }
+        }
 
         const quarters = [];
         for (let q = 0; q < 4; q++) {
-          const active = outfield.filter(
-            (_, i) =>
-              sitOutSchedule[i] === null || !sitOutSchedule[i].includes(q),
-          );
-          const benched = outfield.filter(
-            (_, i) =>
-              sitOutSchedule[i] !== null && sitOutSchedule[i].includes(q),
-          );
-
+          if (
+            lockedQuarters.has(q) &&
+            gameLineup &&
+            gameLineup.quarters &&
+            gameLineup.quarters[q]
+          ) {
+            // Keep locked quarter as-is (but ensure any newly checked-in players are added as SUB)
+            const locked = [...gameLineup.quarters[q]];
+            const names = locked.map((p) => p.name);
+            checkedIn
+              .filter((k) => !names.includes(k))
+              .forEach((k) => {
+                locked.push({ name: k, role: "SUB" });
+              });
+            quarters.push(locked);
+            continue;
+          }
+          const active = outfield.filter((_, i) => !sitOut[i].includes(q));
+          const benched = outfield.filter((_, i) => sitOut[i].includes(q));
           const assignments = assignPositions(active);
-          const lineup = [
+          quarters.push([
             { name: gk, role: "GK" },
             ...assignments,
             ...benched.map((name) => ({ name, role: "SUB" })),
-          ];
-          quarters.push(lineup);
+          ]);
         }
 
         return { gk, quarters };
@@ -790,6 +917,8 @@
             activeFieldQ,
             selectedGK,
             centerMidAllowed: [...centerMidAllowed],
+            checkedIn,
+            lockedQuarters: [...lockedQuarters],
           }),
         );
       }
@@ -804,6 +933,12 @@
             selectedGK = parsed.selectedGK || null;
             if (Array.isArray(parsed.centerMidAllowed)) {
               centerMidAllowed = new Set(parsed.centerMidAllowed);
+            }
+            if (Array.isArray(parsed.checkedIn)) {
+              checkedIn = parsed.checkedIn;
+            }
+            if (Array.isArray(parsed.lockedQuarters)) {
+              lockedQuarters = new Set(parsed.lockedQuarters);
             }
             return true;
           }
@@ -826,9 +961,14 @@
       }
 
       function renderCMFPicker() {
+        if (!gameLineup) {
+          document.getElementById("cmf-pills").innerHTML = "";
+          return;
+        }
         const gk = gameLineup.gk;
         const container = document.getElementById("cmf-pills");
-        container.innerHTML = KIDS.filter((k) => k !== gk)
+        container.innerHTML = checkedIn
+          .filter((k) => k !== gk)
           .map((kid) => {
             const on = centerMidAllowed.has(kid);
             return `<button class="cmf-pill${on ? " selected" : ""}" onclick="toggleCMF('${kid}')">${kid}</button>`;
@@ -845,18 +985,68 @@
       }
 
       function renderGKPicker() {
+        if (!gameLineup) {
+          document.getElementById("gk-pills").innerHTML = "";
+          return;
+        }
         const container = document.getElementById("gk-pills");
-        container.innerHTML = KIDS.map((kid) => {
-          const active = kid === gameLineup.gk;
-          return `<button class="gk-pill${active ? " selected" : ""}" onclick="pickGK('${kid}')">${kid}</button>`;
-        }).join("");
+        container.innerHTML = checkedIn
+          .map((kid) => {
+            const active = kid === gameLineup.gk;
+            return `<button class="gk-pill${active ? " selected" : ""}" onclick="pickGK('${kid}')">${kid}</button>`;
+          })
+          .join("");
       }
 
       function reshuffle() {
         activeFieldQ = 0;
+        swapSelection = null;
+        // Only regenerate unlocked quarters
         gameLineup = generateLineup();
         saveLineup();
         renderAll();
+      }
+
+      // ──────────────────────────────────────────
+      // CHECK IN
+      // ──────────────────────────────────────────
+      function toggleCheckIn(name) {
+        const idx = checkedIn.indexOf(name);
+        if (idx === -1) {
+          checkedIn.push(name);
+        } else {
+          checkedIn.splice(idx, 1);
+          if (selectedGK === name) selectedGK = null;
+        }
+        activeFieldQ = 0;
+        swapSelection = null;
+        gameLineup = generateLineup();
+        saveLineup();
+        renderAll();
+      }
+
+      function renderCheckIn() {
+        const container = document.getElementById("checkin-view");
+        const total = PLAYERS_DEFAULT.length;
+        const count = checkedIn.length;
+        let html = `<div class="checkin-count">${count} of ${total} checked in</div><div class="checkin-list">`;
+        // Checked-in players first (in arrival order), then the rest alphabetically
+        const notChecked = PLAYERS_DEFAULT.map((p) => p.name).filter(
+          (n) => !checkedIn.includes(n),
+        );
+        [...checkedIn, ...notChecked].forEach((name) => {
+          const pos = checkedIn.indexOf(name);
+          const checked = pos !== -1;
+          html += `<div class="checkin-row${checked ? " checked" : ""}" onclick="toggleCheckIn('${name}')">
+            <span class="checkin-name">${name}</span>
+            ${checked ? `<span class="checkin-num">#${pos + 1}</span>` : ""}
+          </div>`;
+        });
+        html += "</div>";
+        if (count < 8) {
+          html += `<div class="not-enough-msg">Check in at least 8 players<br>to generate a lineup.</div>`;
+        }
+        container.innerHTML = html;
       }
 
       // ──────────────────────────────────────────
@@ -881,6 +1071,10 @@
       function renderQuarters() {
         const container = document.getElementById("quarters-list");
         container.innerHTML = "";
+        if (!gameLineup) {
+          container.innerHTML = `<div class="not-enough-msg">Check in at least 8 players<br>to see the lineup.</div>`;
+          return;
+        }
 
         gameLineup.quarters.forEach((quarter, qi) => {
           const card = document.createElement("div");
@@ -909,6 +1103,11 @@
       function renderField() {
         const tabs = document.getElementById("field-tabs");
         tabs.innerHTML = "";
+        if (!gameLineup) {
+          document.getElementById("field-view").innerHTML =
+            `<div class="not-enough-msg">Check in at least 8 players<br>to see the field view.</div>`;
+          return;
+        }
         [1, 2, 3, 4].forEach((q, i) => {
           const btn = document.createElement("button");
           btn.className = "q-tab" + (i === activeFieldQ ? " active" : "");
@@ -967,22 +1166,88 @@
       }
 
       // ──────────────────────────────────────────
-      // RENDER: FULL GAME TABLE
+      // GAME TABLE SWAP
       // ──────────────────────────────────────────
+      let swapSelection = null; // { quarter, name }
+
+      function selectCell(qi, name) {
+        if (name === gameLineup.gk) return; // GK not swappable
+        if (
+          swapSelection &&
+          swapSelection.quarter === qi &&
+          swapSelection.name === name
+        ) {
+          // Deselect on second tap of same cell
+          swapSelection = null;
+          renderGame();
+          return;
+        }
+        if (swapSelection && swapSelection.quarter === qi) {
+          // Second tap in same quarter — perform swap
+          const q = gameLineup.quarters[qi];
+          const a = q.find((p) => p.name === swapSelection.name);
+          const b = q.find((p) => p.name === name);
+          if (a && b) {
+            [a.role, b.role] = [b.role, a.role];
+            saveLineup();
+          }
+          swapSelection = null;
+          renderAll();
+          return;
+        }
+        // First tap (or tap in different quarter — reset)
+        swapSelection = { quarter: qi, name };
+        renderGame();
+      }
+
+      function toggleLockQuarter(qi) {
+        if (lockedQuarters.has(qi)) {
+          lockedQuarters.delete(qi);
+        } else {
+          lockedQuarters.add(qi);
+        }
+        saveLineup();
+        renderGame();
+      }
+
       function renderGame() {
+        if (!gameLineup) {
+          document.getElementById("game-view").innerHTML =
+            `<div class="not-enough-msg">Check in at least 8 players<br>to see the game table.</div>`;
+          return;
+        }
         let html = `<table class="game-table">
     <thead><tr>
-      <th>Player</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th>
+      <th>Player</th>
+      ${[0, 1, 2, 3]
+        .map((qi) => {
+          const locked = lockedQuarters.has(qi);
+          return `<th>Q${qi + 1}<button class="q-lock-btn${locked ? " locked" : ""}" onclick="toggleLockQuarter(${qi})" title="${locked ? "Unlock" : "Lock"} Q${qi + 1}">${locked ? "🔒" : "🔓"}</button></th>`;
+        })
+        .join("")}
     </tr></thead><tbody>`;
 
-        KIDS.forEach((kid) => {
+        const gkFirst = [
+          gameLineup.gk,
+          ...checkedIn.filter((k) => k !== gameLineup.gk),
+        ];
+        gkFirst.forEach((kid) => {
           const isGK = kid === gameLineup.gk;
           html += `<tr class="${isGK ? "is-gk" : ""}">`;
           html += `<td>${kid}${isGK ? " 🥅" : ""}</td>`;
-          gameLineup.quarters.forEach((q) => {
+          gameLineup.quarters.forEach((q, qi) => {
             const p = q.find((pl) => pl.name === kid);
             const role = p ? p.role : "SUB";
-            html += `<td><span class="badge badge-sm role-${role}">${role}</span></td>`;
+            const isSelected =
+              swapSelection &&
+              swapSelection.quarter === qi &&
+              swapSelection.name === kid;
+            const cellClass =
+              (!isGK ? " swappable" : "") +
+              (isSelected ? " swap-selected" : "");
+            const badgeExtra = isSelected ? " selected-swap" : "";
+            const click = !isGK ? ` onclick="selectCell(${qi},'${kid}')"` : "";
+            html += `<td class="${cellClass}"${click}><span class="badge badge-sm role-${role}${badgeExtra}">${role}</span></td>`;
           });
           html += "</tr>";
         });
@@ -1002,8 +1267,13 @@
       };
 
       function renderSummary() {
+        if (!gameLineup) {
+          document.getElementById("summary-view").innerHTML =
+            `<div class="not-enough-msg">Check in at least 8 players<br>to see the summary.</div>`;
+          return;
+        }
         const gk = gameLineup.gk;
-        const outfield = KIDS.filter((k) => k !== gk);
+        const outfield = checkedIn.filter((k) => k !== gk);
 
         const stats = outfield
           .map((kid) => {
@@ -1013,9 +1283,10 @@
             const positions = active.map(
               (q) => q.find((p) => p.name === kid).role,
             );
-            return { name: kid, count: active.length, positions };
+            const arrival = checkedIn.indexOf(kid) + 1;
+            return { name: kid, count: active.length, positions, arrival };
           })
-          .sort((a, b) => b.count - a.count);
+          .sort((a, b) => a.arrival - b.arrival);
 
         const dots = (positions) =>
           positions
@@ -1025,16 +1296,17 @@
             )
             .join("");
 
+        const gkArrival = checkedIn.indexOf(gk) + 1;
         let html = `
-    <div class="gk-note">Goalkeeper: <strong>${gk}</strong> — plays all 4 quarters</div>
+    <div class="gk-note">Goalkeeper: <strong>${gk}</strong> <span style="color:var(--text-muted);font-size:0.78rem;font-weight:500;">#${gkArrival}</span> — plays all 4 quarters</div>
     <div class="summary-card">
       <div class="summary-col-header"><span>Player</span><span>Quarters</span></div>`;
 
-        stats.forEach(({ name, count, positions }) => {
+        stats.forEach(({ name, count, positions, arrival }) => {
           html += `
       <div class="summary-row">
         <div>
-          <div class="summary-name">${name}</div>
+          <div class="summary-name">${name} <span style="color:var(--text-muted);font-size:0.78rem;font-weight:500;">#${arrival}</span></div>
           <div class="pos-dots">${dots(positions)}</div>
         </div>
         <div class="summary-right">
@@ -1052,16 +1324,17 @@
       // RENDER ALL
       // ──────────────────────────────────────────
       function renderAll() {
+        renderCheckIn();
         renderCMFPicker();
         renderGKPicker();
-        renderQuarters();
         renderField();
         renderGame();
         renderSummary();
       }
 
       // ── Init ──
-      if (!loadLineup()) {
+      loadLineup();
+      if (!gameLineup && checkedIn.length >= 8) {
         gameLineup = generateLineup();
         saveLineup();
       }
