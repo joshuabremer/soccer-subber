@@ -164,6 +164,12 @@
         background: var(--mid);
         color: #000;
       }
+      .role-CMF {
+        background: var(--mid);
+        color: #000;
+        outline: 2.5px solid #fff;
+        outline-offset: -3px;
+      }
       .role-FWD {
         background: var(--fwd);
         color: #000;
@@ -307,6 +313,10 @@
       .player-chip.chip-MID {
         border-color: var(--mid);
       }
+      .player-chip.chip-CMF {
+        border-color: var(--mid);
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
+      }
       .player-chip.chip-FWD {
         border-color: var(--fwd);
       }
@@ -323,6 +333,9 @@
         color: var(--def);
       }
       .chip-MID .chip-role {
+        color: var(--mid);
+      }
+      .chip-CMF .chip-role {
         color: var(--mid);
       }
       .chip-FWD .chip-role {
@@ -488,6 +501,43 @@
         border-radius: 50%;
       }
 
+      /* ── CMF Picker ── */
+      .cmf-picker {
+        background: var(--surface);
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+      .cmf-picker-label {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        margin-bottom: 10px;
+      }
+      .cmf-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+      .cmf-pill {
+        padding: 7px 14px;
+        border-radius: 20px;
+        border: 2px solid var(--surface2);
+        background: var(--surface2);
+        color: var(--text-muted);
+        font-size: 0.84rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .cmf-pill.selected {
+        border-color: var(--mid);
+        background: rgba(250, 204, 21, 0.15);
+        color: var(--mid);
+      }
+
       /* ── GK Picker ── */
       .gk-picker {
         background: var(--surface);
@@ -535,6 +585,10 @@
     <main>
       <!-- Quarters list -->
       <div id="screen-quarters" class="screen active">
+        <div class="cmf-picker">
+          <div class="cmf-picker-label">⚡ Center Mid Eligible</div>
+          <div class="cmf-pills" id="cmf-pills"></div>
+        </div>
         <div class="gk-picker">
           <div class="gk-picker-label">🥅 Choose Goalkeeper</div>
           <div class="gk-pills" id="gk-pills"></div>
@@ -579,37 +633,36 @@
       </button>
     </nav>
 
+    <script src="players.js"></script>
     <script>
       // ──────────────────────────────────────────
-      // DATA
+      // DATA  (loaded from players.js)
       // ──────────────────────────────────────────
-      const KIDS = [
-        "Alex",
-        "Jordan",
-        "Sam",
-        "Taylor",
-        "Riley",
-        "Casey",
-        "Morgan",
-        "Jamie",
-        "Drew",
-        "Blake",
-      ];
+      // Build a name-keyed map for fast lookup
+      const playerMap = Object.fromEntries(
+        PLAYERS_DEFAULT.map((p) => [p.name, p]),
+      );
+      const KIDS = PLAYERS_DEFAULT.map((p) => p.name);
 
-      // 2-3-2 formation: 1 GK + 2 DEF + 3 MID + 2 FWD = 8 on field, 2 SUB (total 10)
-      const OUTFIELD_SLOTS = ["DEF", "DEF", "MID", "MID", "MID", "FWD", "FWD"];
+      // 2-3-2: 2 DEF · 1 CMF · 2 MID · 2 FWD  (7 outfield + 1 GK = 8 on field)
+      const FIELD_SLOTS = { DEF: 2, CMF: 1, MID: 2, FWD: 2 }; // total = 7
 
       const ROLE_LABELS = {
         GK: "Goalkeeper",
         DEF: "Defender",
         MID: "Midfielder",
+        CMF: "Center Mid",
         FWD: "Forward",
         SUB: "Sub",
       };
 
-      let gameLineup = null; // { gk: string, quarters: Array<{name,role}[]> }
+      let gameLineup = null;
       let activeFieldQ = 0;
-      let selectedGK = null; // null = random
+      let selectedGK = null;
+      // Initialise CMF allowances from JSON; overridden by localStorage on load
+      let centerMidAllowed = new Set(
+        PLAYERS_DEFAULT.filter((p) => p.canPlayCMF).map((p) => p.name),
+      );
 
       // ──────────────────────────────────────────
       // UTILITIES
@@ -626,32 +679,101 @@
       // ──────────────────────────────────────────
       // LINEUP GENERATION
       // ──────────────────────────────────────────
+
+      // Returns sitOutQuarters[i] = array of quarter indices player i is benched
+      // (null if never benched). Uses a FIFO queue based on arrival order:
+      // each quarter the 7 players with the fewest quarters played get on the
+      // field; ties are broken by index (lower = earlier arrival = higher
+      // priority), so first-arriving players always accumulate the most time.
+      function buildBenchSchedule(n) {
+        const benchPerQ = n - 7; // bench spots each quarter
+        if (benchPerQ <= 0) return Array(n).fill(null);
+
+        const playCount = Array(n).fill(0);
+        const sitOut = Array.from({ length: n }, () => []);
+
+        for (let q = 0; q < 4; q++) {
+          // Sort by fewest quarters played; break ties by arrival order (lower index first).
+          const sorted = [...Array(n).keys()].sort((a, b) =>
+            playCount[a] !== playCount[b] ? playCount[a] - playCount[b] : a - b,
+          );
+          sorted.slice(0, 7).forEach((i) => playCount[i]++);
+          sorted.slice(7).forEach((i) => sitOut[i].push(q));
+        }
+
+        return sitOut.map((arr) => (arr.length ? arr : null));
+      }
+
+      // Assign positions to active players respecting preferences.
+      // Processes slots in most-constrained-first order.
+      function assignPositions(active) {
+        const remaining = shuffle([...active]);
+        const result = [];
+
+        // Order: CMF (only CMF-eligible), DEF, FWD, MID (most flexible, last)
+        const order = [
+          { role: "CMF", count: FIELD_SLOTS.CMF },
+          { role: "DEF", count: FIELD_SLOTS.DEF },
+          { role: "FWD", count: FIELD_SLOTS.FWD },
+          { role: "MID", count: FIELD_SLOTS.MID },
+        ];
+
+        for (const { role, count } of order) {
+          let pool;
+          if (role === "CMF") {
+            const eligible = remaining.filter((n) => centerMidAllowed.has(n));
+            // Prefer CMF-eligible who also like MID
+            const prefMid = eligible.filter((n) =>
+              playerMap[n]?.preferredPositions.includes("MID"),
+            );
+            pool =
+              prefMid.length >= count
+                ? prefMid
+                : eligible.length >= count
+                  ? eligible
+                  : remaining; // fallback: anyone
+          } else {
+            const pref = remaining.filter((n) =>
+              playerMap[n]?.preferredPositions.includes(role),
+            );
+            pool = pref.length >= count ? pref : remaining;
+          }
+          const picks = shuffle(pool).slice(0, count);
+          picks.forEach((name) => {
+            result.push({ name, role });
+            remaining.splice(remaining.indexOf(name), 1);
+          });
+        }
+
+        // Safety: assign any leftover players (shouldn't normally happen)
+        remaining.forEach((name) => result.push({ name, role: "MID" }));
+        return result;
+      }
+
       function generateLineup() {
         const gk = selectedGK || shuffle(KIDS)[0];
-        const outfield = shuffle(KIDS.filter((k) => k !== gk)); // 9 outfield kids
+        const outfield = KIDS.filter((k) => k !== gk); // preserves json order; shuffled inside helpers
+        const n = outfield.length;
 
-        // Fair bench rotation:
-        // 4 quarters × 2 bench spots = 8 bench slots for 9 kids.
-        // → 8 kids sit out exactly once, 1 kid plays all 4 quarters.
-        // Build a list of 8 bench assignments (2 per quarter) and shuffle them.
-        const benchSlots = shuffle([0, 0, 1, 1, 2, 2, 3, 3]);
-        // sitOutQuarter[i] = which quarter kid i sits out (null = never sits out)
-        const sitOutQuarter = outfield.map((_, i) =>
-          i < 8 ? benchSlots[i] : null,
-        );
+        const sitOutSchedule = buildBenchSchedule(n); // sitOutSchedule[i] = [q,...] or null
 
         const quarters = [];
         for (let q = 0; q < 4; q++) {
-          const active = outfield.filter((_, i) => sitOutQuarter[i] !== q);
-          const benched = outfield.filter((_, i) => sitOutQuarter[i] === q);
+          const active = outfield.filter(
+            (_, i) =>
+              sitOutSchedule[i] === null || !sitOutSchedule[i].includes(q),
+          );
+          const benched = outfield.filter(
+            (_, i) =>
+              sitOutSchedule[i] !== null && sitOutSchedule[i].includes(q),
+          );
 
-          // Randomise role assignment among the active players each quarter
-          const randomisedActive = shuffle(active);
-          const lineup = [{ name: gk, role: "GK" }];
-          OUTFIELD_SLOTS.forEach((role, i) => {
-            lineup.push({ name: randomisedActive[i], role });
-          });
-          benched.forEach((name) => lineup.push({ name, role: "SUB" }));
+          const assignments = assignPositions(active);
+          const lineup = [
+            { name: gk, role: "GK" },
+            ...assignments,
+            ...benched.map((name) => ({ name, role: "SUB" })),
+          ];
           quarters.push(lineup);
         }
 
@@ -663,7 +785,12 @@
       function saveLineup() {
         localStorage.setItem(
           LS_KEY,
-          JSON.stringify({ gameLineup, activeFieldQ, selectedGK }),
+          JSON.stringify({
+            gameLineup,
+            activeFieldQ,
+            selectedGK,
+            centerMidAllowed: [...centerMidAllowed],
+          }),
         );
       }
 
@@ -675,12 +802,38 @@
             gameLineup = parsed.gameLineup;
             activeFieldQ = parsed.activeFieldQ || 0;
             selectedGK = parsed.selectedGK || null;
+            if (Array.isArray(parsed.centerMidAllowed)) {
+              centerMidAllowed = new Set(parsed.centerMidAllowed);
+            }
             return true;
           }
         } catch (e) {
           /* ignore corrupt data */
         }
         return false;
+      }
+
+      function toggleCMF(name) {
+        if (centerMidAllowed.has(name)) {
+          centerMidAllowed.delete(name);
+        } else {
+          centerMidAllowed.add(name);
+        }
+        activeFieldQ = 0;
+        gameLineup = generateLineup();
+        saveLineup();
+        renderAll();
+      }
+
+      function renderCMFPicker() {
+        const gk = gameLineup.gk;
+        const container = document.getElementById("cmf-pills");
+        container.innerHTML = KIDS.filter((k) => k !== gk)
+          .map((kid) => {
+            const on = centerMidAllowed.has(kid);
+            return `<button class="cmf-pill${on ? " selected" : ""}" onclick="toggleCMF('${kid}')">${kid}</button>`;
+          })
+          .join("");
       }
 
       function pickGK(name) {
@@ -723,7 +876,7 @@
       // ──────────────────────────────────────────
       // RENDER: QUARTERS LIST
       // ──────────────────────────────────────────
-      const ROLE_ORDER = ["GK", "DEF", "MID", "FWD", "SUB"];
+      const ROLE_ORDER = ["GK", "DEF", "MID", "CMF", "FWD", "SUB"];
 
       function renderQuarters() {
         const container = document.getElementById("quarters-list");
@@ -784,7 +937,13 @@
         const q = gameLineup.quarters[qi];
         const gk = q.find((p) => p.role === "GK");
         const defs = q.filter((p) => p.role === "DEF");
-        const mids = q.filter((p) => p.role === "MID");
+        // Order mids: left MID, CMF in centre, right MID
+        const leftRight = q.filter((p) => p.role === "MID");
+        const mids = [
+          leftRight[0],
+          ...q.filter((p) => p.role === "CMF"),
+          leftRight[1],
+        ].filter(Boolean);
         const fwds = q.filter((p) => p.role === "FWD");
         const subs = q.filter((p) => p.role === "SUB");
 
@@ -838,6 +997,7 @@
       const ROLE_COLORS = {
         DEF: "var(--def)",
         MID: "var(--mid)",
+        CMF: "var(--mid)",
         FWD: "var(--fwd)",
       };
 
@@ -892,6 +1052,7 @@
       // RENDER ALL
       // ──────────────────────────────────────────
       function renderAll() {
+        renderCMFPicker();
         renderGKPicker();
         renderQuarters();
         renderField();
