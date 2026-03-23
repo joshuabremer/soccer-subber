@@ -55,6 +55,11 @@
         font-weight: 700;
         color: var(--accent);
       }
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
       .formation-tag {
         background: var(--surface2);
         padding: 4px 10px;
@@ -62,6 +67,23 @@
         font-size: 0.78rem;
         color: var(--text-muted);
         font-weight: 600;
+      }
+      .reset-btn {
+        border: 1px solid rgba(241, 245, 249, 0.18);
+        background: transparent;
+        color: var(--text-muted);
+        padding: 7px 10px;
+        border-radius: 10px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition:
+          background 0.15s,
+          color 0.15s,
+          border-color 0.15s;
+      }
+      .reset-btn:active {
+        background: rgba(241, 245, 249, 0.08);
       }
 
       /* ── Main ── */
@@ -601,6 +623,10 @@
         background: rgba(245, 158, 11, 0.15);
         color: var(--gk);
       }
+      .gk-pill:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
 
       /* ── Check-in screen ── */
       .checkin-count {
@@ -658,7 +684,10 @@
   <body>
     <header>
       <h1>⚽ Sub Manager</h1>
-      <span class="formation-tag">2-3-2</span>
+      <div class="header-actions">
+        <span class="formation-tag">2-3-2</span>
+        <button class="reset-btn" onclick="resetApp()">Reset</button>
+      </div>
     </header>
 
     <main>
@@ -680,7 +709,7 @@
           <div class="cmf-pills" id="cmf-pills"></div>
         </div>
         <div class="gk-picker">
-          <div class="gk-picker-label">🥅 Choose Goalkeeper</div>
+          <div class="gk-picker-label">🥅 Choose Up to 2 Goalkeepers</div>
           <div class="gk-pills" id="gk-pills"></div>
         </div>
         <button class="reshuffle-btn" onclick="reshuffle()">
@@ -722,6 +751,7 @@
         PLAYERS_DEFAULT.map((p) => [p.name, p]),
       );
       const KIDS = PLAYERS_DEFAULT.map((p) => p.name);
+      const TOTAL_QUARTERS = 4;
 
       // 2-3-2: 2 DEF · 1 CMF · 2 MID · 2 FWD  (7 outfield + 1 GK = 8 on field)
       const FIELD_SLOTS = { DEF: 2, CMF: 1, MID: 2, FWD: 2 }; // total = 7
@@ -737,7 +767,7 @@
 
       let gameLineup = null;
       let activeFieldQ = 0;
-      let selectedGK = null;
+      let selectedGKs = [];
       // Initialise CMF allowances from JSON; overridden by localStorage on load
       let centerMidAllowed = new Set(
         PLAYERS_DEFAULT.filter((p) => p.canPlayCMF).map((p) => p.name),
@@ -760,33 +790,72 @@
         return a;
       }
 
+      function getSelectedGoalkeepers() {
+        return [...new Set(selectedGKs)].filter((name) => checkedIn.includes(name));
+      }
+
+      function buildGoalkeeperPlan() {
+        const goalkeepers = getSelectedGoalkeepers().slice(0, 2);
+
+        if (!goalkeepers.length) {
+          return {
+            goalkeepers: checkedIn.length ? [checkedIn[0]] : [],
+            byQuarter: Array(TOTAL_QUARTERS).fill(checkedIn[0] || null),
+          };
+        }
+
+        if (goalkeepers.length === 1) {
+          return {
+            goalkeepers,
+            byQuarter: Array(TOTAL_QUARTERS).fill(goalkeepers[0]),
+          };
+        }
+
+        return {
+          goalkeepers,
+          byQuarter: [
+            goalkeepers[0],
+            goalkeepers[0],
+            goalkeepers[1],
+            goalkeepers[1],
+          ],
+        };
+      }
+
+      function buildLockedQuarter(existingQuarter, qi, goalkeeperPlan) {
+        if (!existingQuarter) return null;
+
+        const currentGK = goalkeeperPlan.byQuarter[qi];
+        const preserved = [];
+        const used = new Set();
+
+        preserved.push({ name: currentGK, role: "GK" });
+        used.add(currentGK);
+
+        existingQuarter
+          .filter(
+            (player) =>
+              player.role !== "GK" &&
+              checkedIn.includes(player.name) &&
+              player.name !== currentGK,
+          )
+          .forEach((player) => {
+            if (!used.has(player.name)) {
+              preserved.push({ name: player.name, role: player.role });
+              used.add(player.name);
+            }
+          });
+
+        checkedIn
+          .filter((name) => !used.has(name))
+          .forEach((name) => preserved.push({ name, role: "SUB" }));
+
+        return preserved;
+      }
+
       // ──────────────────────────────────────────
       // LINEUP GENERATION
       // ──────────────────────────────────────────
-
-      // Returns sitOutQuarters[i] = array of quarter indices player i is benched
-      // (null if never benched). Uses a FIFO queue based on arrival order:
-      // each quarter the 7 players with the fewest quarters played get on the
-      // field; ties are broken by index (lower = earlier arrival = higher
-      // priority), so first-arriving players always accumulate the most time.
-      function buildBenchSchedule(n) {
-        const benchPerQ = n - 7; // bench spots each quarter
-        if (benchPerQ <= 0) return Array(n).fill(null);
-
-        const playCount = Array(n).fill(0);
-        const sitOut = Array.from({ length: n }, () => []);
-
-        for (let q = 0; q < 4; q++) {
-          // Sort by fewest quarters played; break ties by arrival order (lower index first).
-          const sorted = [...Array(n).keys()].sort((a, b) =>
-            playCount[a] !== playCount[b] ? playCount[a] - playCount[b] : a - b,
-          );
-          sorted.slice(0, 7).forEach((i) => playCount[i]++);
-          sorted.slice(7).forEach((i) => sitOut[i].push(q));
-        }
-
-        return sitOut.map((arr) => (arr.length ? arr : null));
-      }
 
       // Assign positions to active players respecting preferences.
       // Processes slots in most-constrained-first order.
@@ -837,74 +906,61 @@
 
       function generateLineup() {
         if (checkedIn.length < 8) return null;
-        const gk = checkedIn.includes(selectedGK) ? selectedGK : checkedIn[0];
-        const outfield = checkedIn.filter((k) => k !== gk);
-        const n = outfield.length;
+        const goalkeeperPlan = buildGoalkeeperPlan();
 
         // Determine which quarters need generation
-        const unlockedQs = [0, 1, 2, 3].filter((q) => !lockedQuarters.has(q));
+        const unlockedQs = Array.from({ length: TOTAL_QUARTERS }, (_, q) => q).filter(
+          (q) => !lockedQuarters.has(q),
+        );
 
-        // Seed play counts from locked quarters so FIFO queue stays fair
-        const playCount = Array(n).fill(0);
+        const playCount = Object.fromEntries(checkedIn.map((name) => [name, 0]));
+        const quarters = Array(TOTAL_QUARTERS).fill(null);
+
         if (gameLineup && gameLineup.quarters) {
-          [0, 1, 2, 3]
+          Array.from({ length: TOTAL_QUARTERS }, (_, q) => q)
             .filter((q) => lockedQuarters.has(q))
             .forEach((q) => {
-              const lockedQ = gameLineup.quarters[q];
-              if (lockedQ) {
-                outfield.forEach((name, i) => {
-                  const p = lockedQ.find((pl) => pl.name === name);
-                  if (p && p.role !== "SUB") playCount[i]++;
-                });
-              }
+              const lockedQuarter = buildLockedQuarter(
+                gameLineup.quarters[q],
+                q,
+                goalkeeperPlan,
+              );
+              if (!lockedQuarter) return;
+              quarters[q] = lockedQuarter;
+              lockedQuarter.forEach((player) => {
+                if (player.role !== "SUB") playCount[player.name]++;
+              });
             });
         }
 
-        // Build bench schedule only for unlocked quarters
-        const sitOut = Array.from({ length: n }, () => []);
         for (const q of unlockedQs) {
-          const benchPerQ = n - 7;
-          if (benchPerQ > 0) {
-            const sorted = [...Array(n).keys()].sort((a, b) =>
-              playCount[a] !== playCount[b]
-                ? playCount[a] - playCount[b]
-                : a - b,
-            );
-            sorted.slice(0, 7).forEach((i) => playCount[i]++);
-            sorted.slice(7).forEach((i) => sitOut[i].push(q));
-          }
-        }
-
-        const quarters = [];
-        for (let q = 0; q < 4; q++) {
-          if (
-            lockedQuarters.has(q) &&
-            gameLineup &&
-            gameLineup.quarters &&
-            gameLineup.quarters[q]
-          ) {
-            // Keep locked quarter as-is (but ensure any newly checked-in players are added as SUB)
-            const locked = [...gameLineup.quarters[q]];
-            const names = locked.map((p) => p.name);
-            checkedIn
-              .filter((k) => !names.includes(k))
-              .forEach((k) => {
-                locked.push({ name: k, role: "SUB" });
-              });
-            quarters.push(locked);
-            continue;
-          }
-          const active = outfield.filter((_, i) => !sitOut[i].includes(q));
-          const benched = outfield.filter((_, i) => sitOut[i].includes(q));
+          const gk = goalkeeperPlan.byQuarter[q];
+          const eligible = checkedIn.filter((name) => name !== gk);
+          const activeCount = Math.min(7, eligible.length);
+          const sorted = [...eligible].sort((a, b) =>
+            playCount[a] !== playCount[b]
+              ? playCount[a] - playCount[b]
+              : checkedIn.indexOf(a) - checkedIn.indexOf(b),
+          );
+          const active = sorted.slice(0, activeCount);
+          const benched = sorted.slice(activeCount);
           const assignments = assignPositions(active);
-          quarters.push([
+
+          playCount[gk]++;
+          active.forEach((name) => playCount[name]++);
+
+          quarters[q] = [
             { name: gk, role: "GK" },
             ...assignments,
             ...benched.map((name) => ({ name, role: "SUB" })),
-          ]);
+          ];
         }
 
-        return { gk, quarters };
+        return {
+          goalkeepers: goalkeeperPlan.goalkeepers,
+          goalkeeperByQuarter: goalkeeperPlan.byQuarter,
+          quarters,
+        };
       }
 
       const LS_KEY = "soccer-lineup-v1";
@@ -915,7 +971,7 @@
           JSON.stringify({
             gameLineup,
             activeFieldQ,
-            selectedGK,
+            selectedGKs,
             centerMidAllowed: [...centerMidAllowed],
             checkedIn,
             lockedQuarters: [...lockedQuarters],
@@ -930,7 +986,11 @@
             const parsed = JSON.parse(saved);
             gameLineup = parsed.gameLineup;
             activeFieldQ = parsed.activeFieldQ || 0;
-            selectedGK = parsed.selectedGK || null;
+            selectedGKs = Array.isArray(parsed.selectedGKs)
+              ? parsed.selectedGKs
+              : parsed.selectedGK
+                ? [parsed.selectedGK]
+                : [];
             if (Array.isArray(parsed.centerMidAllowed)) {
               centerMidAllowed = new Set(parsed.centerMidAllowed);
             }
@@ -939,6 +999,13 @@
             }
             if (Array.isArray(parsed.lockedQuarters)) {
               lockedQuarters = new Set(parsed.lockedQuarters);
+            }
+            if (
+              !gameLineup ||
+              !Array.isArray(gameLineup.goalkeepers) ||
+              !Array.isArray(gameLineup.goalkeeperByQuarter)
+            ) {
+              gameLineup = null;
             }
             return true;
           }
@@ -965,10 +1032,9 @@
           document.getElementById("cmf-pills").innerHTML = "";
           return;
         }
-        const gk = gameLineup.gk;
         const container = document.getElementById("cmf-pills");
         container.innerHTML = checkedIn
-          .filter((k) => k !== gk)
+          .filter((kid) => gameLineup.goalkeeperByQuarter.some((gk) => gk !== kid))
           .map((kid) => {
             const on = centerMidAllowed.has(kid);
             return `<button class="cmf-pill${on ? " selected" : ""}" onclick="toggleCMF('${kid}')">${kid}</button>`;
@@ -977,7 +1043,13 @@
       }
 
       function pickGK(name) {
-        selectedGK = name;
+        if (selectedGKs.includes(name)) {
+          selectedGKs = selectedGKs.filter((kid) => kid !== name);
+        } else if (selectedGKs.length < 2) {
+          selectedGKs = [...selectedGKs, name];
+        } else {
+          return;
+        }
         activeFieldQ = 0;
         gameLineup = generateLineup();
         saveLineup();
@@ -990,10 +1062,13 @@
           return;
         }
         const container = document.getElementById("gk-pills");
+        const selected = new Set(getSelectedGoalkeepers());
+        const selectionFull = selected.size >= 2;
         container.innerHTML = checkedIn
           .map((kid) => {
-            const active = kid === gameLineup.gk;
-            return `<button class="gk-pill${active ? " selected" : ""}" onclick="pickGK('${kid}')">${kid}</button>`;
+            const active = selected.has(kid);
+            const disabled = selectionFull && !active ? " disabled" : "";
+            return `<button class="gk-pill${active ? " selected" : ""}" onclick="pickGK('${kid}')"${disabled}>${kid}</button>`;
           })
           .join("");
       }
@@ -1007,6 +1082,24 @@
         renderAll();
       }
 
+      function resetApp() {
+        if (!window.confirm("Clear all check-ins, goalkeeper picks, locks, and saved lineup?")) {
+          return;
+        }
+
+        localStorage.removeItem(LS_KEY);
+        gameLineup = null;
+        activeFieldQ = 0;
+        selectedGKs = [];
+        centerMidAllowed = new Set(
+          PLAYERS_DEFAULT.filter((p) => p.canPlayCMF).map((p) => p.name),
+        );
+        checkedIn = [];
+        lockedQuarters = new Set();
+        swapSelection = null;
+        renderAll();
+      }
+
       // ──────────────────────────────────────────
       // CHECK IN
       // ──────────────────────────────────────────
@@ -1016,7 +1109,7 @@
           checkedIn.push(name);
         } else {
           checkedIn.splice(idx, 1);
-          if (selectedGK === name) selectedGK = null;
+          selectedGKs = selectedGKs.filter((kid) => kid !== name);
         }
         activeFieldQ = 0;
         swapSelection = null;
@@ -1171,7 +1264,8 @@
       let swapSelection = null; // { quarter, name }
 
       function selectCell(qi, name) {
-        if (name === gameLineup.gk) return; // GK not swappable
+        const cell = gameLineup.quarters[qi].find((player) => player.name === name);
+        if (cell?.role === "GK") return;
         if (
           swapSelection &&
           swapSelection.quarter === qi &&
@@ -1227,14 +1321,14 @@
         .join("")}
     </tr></thead><tbody>`;
 
-        const gkFirst = [
-          gameLineup.gk,
-          ...checkedIn.filter((k) => k !== gameLineup.gk),
+        const keeperFirst = [
+          ...gameLineup.goalkeepers,
+          ...checkedIn.filter((k) => !gameLineup.goalkeepers.includes(k)),
         ];
-        gkFirst.forEach((kid) => {
-          const isGK = kid === gameLineup.gk;
-          html += `<tr class="${isGK ? "is-gk" : ""}">`;
-          html += `<td>${kid}${isGK ? " 🥅" : ""}</td>`;
+        keeperFirst.forEach((kid) => {
+          const isKeeper = gameLineup.goalkeepers.includes(kid);
+          html += `<tr class="${isKeeper ? "is-gk" : ""}">`;
+          html += `<td>${kid}${isKeeper ? " 🥅" : ""}</td>`;
           gameLineup.quarters.forEach((q, qi) => {
             const p = q.find((pl) => pl.name === kid);
             const role = p ? p.role : "SUB";
@@ -1243,10 +1337,11 @@
               swapSelection.quarter === qi &&
               swapSelection.name === kid;
             const cellClass =
-              (!isGK ? " swappable" : "") +
+              (role !== "GK" ? " swappable" : "") +
               (isSelected ? " swap-selected" : "");
             const badgeExtra = isSelected ? " selected-swap" : "";
-            const click = !isGK ? ` onclick="selectCell(${qi},'${kid}')"` : "";
+            const click =
+              role !== "GK" ? ` onclick="selectCell(${qi},'${kid}')"` : "";
             html += `<td class="${cellClass}"${click}><span class="badge badge-sm role-${role}${badgeExtra}">${role}</span></td>`;
           });
           html += "</tr>";
@@ -1260,6 +1355,7 @@
       // RENDER: SUMMARY
       // ──────────────────────────────────────────
       const ROLE_COLORS = {
+        GK: "var(--gk)",
         DEF: "var(--def)",
         MID: "var(--mid)",
         CMF: "var(--mid)",
@@ -1272,10 +1368,7 @@
             `<div class="not-enough-msg">Check in at least 8 players<br>to see the summary.</div>`;
           return;
         }
-        const gk = gameLineup.gk;
-        const outfield = checkedIn.filter((k) => k !== gk);
-
-        const stats = outfield
+        const stats = checkedIn
           .map((kid) => {
             const active = gameLineup.quarters.filter((q) =>
               q.some((p) => p.name === kid && p.role !== "SUB"),
@@ -1288,6 +1381,16 @@
           })
           .sort((a, b) => a.arrival - b.arrival);
 
+        const keeperSummary = gameLineup.goalkeepers
+          .map((kid) => {
+            const quarters = gameLineup.goalkeeperByQuarter
+              .map((gk, qi) => (gk === kid ? `Q${qi + 1}` : null))
+              .filter(Boolean)
+              .join(", ");
+            return `${kid} (${quarters})`;
+          })
+          .join(" · ");
+
         const dots = (positions) =>
           positions
             .map(
@@ -1296,9 +1399,8 @@
             )
             .join("");
 
-        const gkArrival = checkedIn.indexOf(gk) + 1;
         let html = `
-    <div class="gk-note">Goalkeeper: <strong>${gk}</strong> <span style="color:var(--text-muted);font-size:0.78rem;font-weight:500;">#${gkArrival}</span> — plays all 4 quarters</div>
+          <div class="gk-note">Goalkeeping plan: <strong>${keeperSummary}</strong></div>
     <div class="summary-card">
       <div class="summary-col-header"><span>Player</span><span>Quarters</span></div>`;
 
