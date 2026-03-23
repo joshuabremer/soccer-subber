@@ -20,7 +20,7 @@ const PLAYERS_DEFAULT = [
   { name: "Benecio", preferredPositions: ["MID", "FWD"], canPlayCMF: false },
   { name: "Noah", preferredPositions: ["DEF", "FWD"], canPlayCMF: false },
   {
-    name: "Addy",
+    name: "Addie",
     preferredPositions: ["DEF", "MID", "FWD"],
     canPlayCMF: false,
   },
@@ -33,5 +33,10 @@ const PLAYERS_DEFAULT = [
     name: "Mayson",
     preferredPositions: ["DEF", "MID", "FWD"],
     canPlayCMF: true,
+  },
+  {
+    name: "Extra Player",
+    preferredPositions: ["DEF", "MID", "FWD"],
+    canPlayCMF: false,
   },
 ];
