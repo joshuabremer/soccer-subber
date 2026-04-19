@@ -159,6 +159,22 @@ function assignPositions(active) {
           : eligible.length >= count
             ? eligible
             : remaining;
+    } else if (role === "STP") {
+      const eligible = remaining.filter((n) => playerMap[n]?.canPlaySTP);
+      const prefDef = eligible.filter((n) =>
+        playerMap[n]?.preferredPositions.includes("DEF"),
+      );
+      const anyDef = remaining.filter((n) =>
+        playerMap[n]?.preferredPositions.includes("DEF"),
+      );
+      pool =
+        prefDef.length >= count
+          ? prefDef
+          : eligible.length >= count
+            ? eligible
+            : anyDef.length >= count
+              ? anyDef
+              : remaining;
     } else {
       const pref = remaining.filter((n) =>
         playerMap[n]?.preferredPositions.includes(preferredRole),
