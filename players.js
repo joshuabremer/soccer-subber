@@ -36,14 +36,14 @@ const PLAYERS_DEFAULT = [
   {
     name: "Owen",
     preferredPositions: ["DEF", "MID", "FWD"],
-    canPlayCMF: true,
+    canPlayCMF: false,
     canPlaySTP: false,
   },
   {
     name: "Emma",
     preferredPositions: ["MID", "FWD"],
     canPlayCMF: true,
-    canPlaySTP: false,
+    canPlaySTP: true,
   },
   {
     name: "Nora",
@@ -61,7 +61,7 @@ const PLAYERS_DEFAULT = [
     name: "Noah",
     preferredPositions: ["DEF", "FWD"],
     canPlayCMF: false,
-    canPlaySTP: false,
+    canPlaySTP: true,
   },
   {
     name: "Addie",
