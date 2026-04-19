@@ -86,6 +86,32 @@
         background: rgba(241, 245, 249, 0.08);
       }
 
+      .formation-switcher {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .formation-btn {
+        flex: 1;
+        padding: 11px 12px;
+        border-radius: 12px;
+        border: 2px solid var(--surface2);
+        background: var(--surface);
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        font-weight: 700;
+        cursor: pointer;
+        transition:
+          border-color 0.15s,
+          color 0.15s,
+          background 0.15s;
+      }
+      .formation-btn.active {
+        border-color: var(--accent);
+        background: rgba(56, 189, 248, 0.12);
+        color: var(--accent);
+      }
+
       /* ── Main ── */
       main {
         padding: 16px;
@@ -181,6 +207,12 @@
       .role-DEF {
         background: var(--def);
         color: #fff;
+      }
+      .role-STP {
+        background: var(--def);
+        color: #fff;
+        outline: 2.5px solid #fff;
+        outline-offset: -3px;
       }
       .role-MID {
         background: var(--mid);
@@ -332,6 +364,10 @@
       .player-chip.chip-DEF {
         border-color: var(--def);
       }
+      .player-chip.chip-STP {
+        border-color: var(--def);
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
+      }
       .player-chip.chip-MID {
         border-color: var(--mid);
       }
@@ -352,6 +388,9 @@
         color: var(--gk);
       }
       .chip-DEF .chip-role {
+        color: var(--def);
+      }
+      .chip-STP .chip-role {
         color: var(--def);
       }
       .chip-MID .chip-role {
@@ -685,7 +724,7 @@
     <header>
       <h1>⚽ Sub Manager</h1>
       <div class="header-actions">
-        <span class="formation-tag">2-3-2</span>
+        <span class="formation-tag" id="formation-tag">2-3-2</span>
         <button class="reset-btn" onclick="resetApp()">Reset</button>
       </div>
     </header>
@@ -704,6 +743,7 @@
 
       <!-- Full game table -->
       <div id="screen-game" class="screen">
+        <div class="formation-switcher" id="formation-switcher"></div>
         <div class="cmf-picker">
           <div class="cmf-picker-label">⚡ Center Mid Eligible</div>
           <div class="cmf-pills" id="cmf-pills"></div>
@@ -753,12 +793,42 @@
       const KIDS = PLAYERS_DEFAULT.map((p) => p.name);
       const TOTAL_QUARTERS = 4;
 
-      // 2-3-2: 2 DEF · 1 CMF · 2 MID · 2 FWD  (7 outfield + 1 GK = 8 on field)
-      const FIELD_SLOTS = { DEF: 2, CMF: 1, MID: 2, FWD: 2 }; // total = 7
+      const FORMATIONS = {
+        "2-3-2": {
+          label: "2-3-2",
+          assignmentOrder: [
+            { role: "CMF", count: 1, preferredRole: "MID" },
+            { role: "MID", count: 2, preferredRole: "MID" },
+            { role: "DEF", count: 2, preferredRole: "DEF" },
+            { role: "FWD", count: 2, preferredRole: "FWD" },
+          ],
+          fieldRows: [
+            ["FWD", "FWD"],
+            ["MID", "CMF", "MID"],
+            ["DEF", "DEF"],
+          ],
+        },
+        "3-3-1": {
+          label: "3-3-1",
+          assignmentOrder: [
+            { role: "CMF", count: 1, preferredRole: "MID" },
+            { role: "STP", count: 1, preferredRole: "DEF" },
+            { role: "MID", count: 2, preferredRole: "MID" },
+            { role: "DEF", count: 2, preferredRole: "DEF" },
+            { role: "FWD", count: 1, preferredRole: "FWD" },
+          ],
+          fieldRows: [
+            ["FWD"],
+            ["MID", "CMF", "MID"],
+            ["DEF", "STP", "DEF"],
+          ],
+        },
+      };
 
       const ROLE_LABELS = {
         GK: "Goalkeeper",
         DEF: "Defender",
+        STP: "Stopper",
         MID: "Midfielder",
         CMF: "Center Mid",
         FWD: "Forward",
@@ -768,6 +838,7 @@
       let gameLineup = null;
       let activeFieldQ = 0;
       let selectedGKs = [];
+      let selectedFormation = "2-3-2";
       // Initialise CMF allowances from JSON; overridden by localStorage on load
       let centerMidAllowed = new Set(
         PLAYERS_DEFAULT.filter((p) => p.canPlayCMF).map((p) => p.name),
@@ -792,6 +863,10 @@
 
       function getSelectedGoalkeepers() {
         return [...new Set(selectedGKs)].filter((name) => checkedIn.includes(name));
+      }
+
+      function getFormationConfig() {
+        return FORMATIONS[selectedFormation] || FORMATIONS["2-3-2"];
       }
 
       function buildGoalkeeperPlan() {
@@ -860,19 +935,13 @@
       // Assign positions to active players respecting preferences.
       // Processes slots in most-constrained-first order.
       function assignPositions(active) {
+        const formation = getFormationConfig();
         const remaining = shuffle([...active]);
         const result = [];
 
-        // Order: CMF first (most constrained), then MID so MID-lovers are
-        // reserved before DEF/FWD slots consume them, then DEF, then FWD.
-        const order = [
-          { role: "CMF", count: FIELD_SLOTS.CMF },
-          { role: "MID", count: FIELD_SLOTS.MID },
-          { role: "DEF", count: FIELD_SLOTS.DEF },
-          { role: "FWD", count: FIELD_SLOTS.FWD },
-        ];
-
-        for (const { role, count } of order) {
+        // Order depends on formation. CMF stays first. 3-3-1 also assigns the
+        // stopper early so defender-only players are reserved for the back line.
+        for (const { role, count, preferredRole } of formation.assignmentOrder) {
           let pool;
           if (role === "CMF") {
             const eligible = remaining.filter((n) => centerMidAllowed.has(n));
@@ -888,7 +957,7 @@
                   : remaining; // fallback: anyone
           } else {
             const pref = remaining.filter((n) =>
-              playerMap[n]?.preferredPositions.includes(role),
+              playerMap[n]?.preferredPositions.includes(preferredRole),
             );
             pool = pref.length >= count ? pref : remaining;
           }
@@ -957,6 +1026,7 @@
         }
 
         return {
+          formation: selectedFormation,
           goalkeepers: goalkeeperPlan.goalkeepers,
           goalkeeperByQuarter: goalkeeperPlan.byQuarter,
           quarters,
@@ -972,6 +1042,7 @@
             gameLineup,
             activeFieldQ,
             selectedGKs,
+            selectedFormation,
             centerMidAllowed: [...centerMidAllowed],
             checkedIn,
             lockedQuarters: [...lockedQuarters],
@@ -991,6 +1062,11 @@
               : parsed.selectedGK
                 ? [parsed.selectedGK]
                 : [];
+            if (FORMATIONS[parsed.selectedFormation]) {
+              selectedFormation = parsed.selectedFormation;
+            } else if (FORMATIONS[parsed.gameLineup?.formation]) {
+              selectedFormation = parsed.gameLineup.formation;
+            }
             if (Array.isArray(parsed.centerMidAllowed)) {
               centerMidAllowed = new Set(parsed.centerMidAllowed);
             }
@@ -1013,6 +1089,32 @@
           /* ignore corrupt data */
         }
         return false;
+      }
+
+      function setFormation(formationKey) {
+        if (!FORMATIONS[formationKey] || formationKey === selectedFormation) {
+          return;
+        }
+        selectedFormation = formationKey;
+        activeFieldQ = 0;
+        lockedQuarters = new Set();
+        swapSelection = null;
+        gameLineup = generateLineup();
+        saveLineup();
+        renderAll();
+      }
+
+      function renderFormationPicker() {
+        const container = document.getElementById("formation-switcher");
+        const formationKeys = Object.keys(FORMATIONS);
+        container.innerHTML = formationKeys
+          .map((key) => {
+            const active = key === selectedFormation ? " active" : "";
+            return `<button class="formation-btn${active}" onclick="setFormation('${key}')">${FORMATIONS[key].label}</button>`;
+          })
+          .join("");
+        document.getElementById("formation-tag").textContent =
+          getFormationConfig().label;
       }
 
       function toggleCMF(name) {
@@ -1159,7 +1261,9 @@
       // ──────────────────────────────────────────
       // RENDER: QUARTERS LIST
       // ──────────────────────────────────────────
-      const ROLE_ORDER = ["GK", "DEF", "MID", "CMF", "FWD", "SUB"];
+      function getRoleOrder() {
+        return ["GK", "DEF", "STP", "MID", "CMF", "FWD", "SUB"];
+      }
 
       function renderQuarters() {
         const container = document.getElementById("quarters-list");
@@ -1174,7 +1278,7 @@
           card.className = "quarter-card";
 
           const sorted = [...quarter].sort(
-            (a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role),
+            (a, b) => getRoleOrder().indexOf(a.role) - getRoleOrder().indexOf(b.role),
           );
 
           let html = `<div class="quarter-title"><span class="q-num">Q${qi + 1}</span> Quarter ${qi + 1}</div>`;
@@ -1227,25 +1331,26 @@
 
       function renderFieldForQ(qi) {
         const q = gameLineup.quarters[qi];
-        const gk = q.find((p) => p.role === "GK");
-        const defs = q.filter((p) => p.role === "DEF");
-        // Order mids: left MID, CMF in centre, right MID
-        const leftRight = q.filter((p) => p.role === "MID");
-        const mids = [
-          leftRight[0],
-          ...q.filter((p) => p.role === "CMF"),
-          leftRight[1],
-        ].filter(Boolean);
-        const fwds = q.filter((p) => p.role === "FWD");
+        const formation = getFormationConfig();
+        const byRole = Object.fromEntries(
+          ["GK", "DEF", "STP", "MID", "CMF", "FWD", "SUB"].map((role) => [
+            role,
+            q.filter((p) => p.role === role),
+          ]),
+        );
+        const gk = byRole.GK[0];
         const subs = q.filter((p) => p.role === "SUB");
+        const rows = formation.fieldRows.map((row) =>
+          row
+            .map((role) => byRole[role].shift())
+            .filter(Boolean),
+        );
 
         document.getElementById("field-view").innerHTML = `
     <div class="soccer-field">
       <div class="field-label">Opponent's Goal</div>
       <div class="goal-rect top"></div>
-      <div class="field-row">${fwds.map(chipHTML).join("")}</div>
-      <div class="field-row">${mids.map(chipHTML).join("")}</div>
-      <div class="field-row">${defs.map(chipHTML).join("")}</div>
+      ${rows.map((row) => `<div class="field-row">${row.map(chipHTML).join("")}</div>`).join("")}
       <div class="field-row">${gk ? chipHTML(gk) : ""}</div>
       <div class="goal-rect bottom"></div>
       <div class="field-label">Our Goal</div>
@@ -1357,6 +1462,7 @@
       const ROLE_COLORS = {
         GK: "var(--gk)",
         DEF: "var(--def)",
+        STP: "var(--def)",
         MID: "var(--mid)",
         CMF: "var(--mid)",
         FWD: "var(--fwd)",
@@ -1395,7 +1501,7 @@
           positions
             .map(
               (r) =>
-                `<div class="pos-dot" style="background:${ROLE_COLORS[r] || "var(--sub)"};" title="${r}"></div>`,
+                `<div class="pos-dot" style="background:${ROLE_COLORS[r] || "var(--sub)"};" title="${ROLE_LABELS[r] || r}"></div>`,
             )
             .join("");
 
@@ -1427,6 +1533,7 @@
       // ──────────────────────────────────────────
       function renderAll() {
         renderCheckIn();
+        renderFormationPicker();
         renderCMFPicker();
         renderGKPicker();
         renderField();
