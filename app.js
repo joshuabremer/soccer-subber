@@ -4,7 +4,13 @@
 // Build a name-keyed map for fast lookup
 const playerMap = Object.fromEntries(PLAYERS_DEFAULT.map((p) => [p.name, p]));
 const KIDS = PLAYERS_DEFAULT.map((p) => p.name);
+const PLAYER_DEFAULTS_SNAPSHOT = PLAYERS_DEFAULT.map((p) => ({
+  name: p.name,
+  preferredPositions: [...p.preferredPositions],
+  canPlaySTP: p.canPlaySTP,
+}));
 const TOTAL_QUARTERS = 4;
+const STATE_VERSION = 2;
 
 const FORMATIONS = {
   "2-3-2": {
@@ -258,6 +264,7 @@ function saveLineup() {
   localStorage.setItem(
     LS_KEY,
     JSON.stringify({
+      version: STATE_VERSION,
       gameLineup,
       activeFieldQ,
       selectedGKs,
@@ -265,6 +272,11 @@ function saveLineup() {
       centerMidAllowed: [...centerMidAllowed],
       checkedIn,
       lockedQuarters: [...lockedQuarters],
+      playerPrefs: KIDS.map((name) => ({
+        name,
+        preferredPositions: playerMap[name].preferredPositions,
+        canPlaySTP: playerMap[name].canPlaySTP,
+      })),
     }),
   );
 }
@@ -276,29 +288,58 @@ function loadLineup() {
       const parsed = JSON.parse(saved);
       gameLineup = parsed.gameLineup;
       activeFieldQ = parsed.activeFieldQ || 0;
-      selectedGKs = Array.isArray(parsed.selectedGKs)
+      const savedGKs = Array.isArray(parsed.selectedGKs)
         ? parsed.selectedGKs
         : parsed.selectedGK
           ? [parsed.selectedGK]
           : [];
+      selectedGKs = savedGKs.filter((name) => KIDS.includes(name));
       if (FORMATIONS[parsed.selectedFormation]) {
         selectedFormation = parsed.selectedFormation;
       } else if (FORMATIONS[parsed.gameLineup?.formation]) {
         selectedFormation = parsed.gameLineup.formation;
       }
-      if (Array.isArray(parsed.centerMidAllowed)) {
-        centerMidAllowed = new Set(parsed.centerMidAllowed);
+      if (
+        parsed.version === STATE_VERSION &&
+        Array.isArray(parsed.centerMidAllowed)
+      ) {
+        centerMidAllowed = new Set(
+          parsed.centerMidAllowed.filter((name) => KIDS.includes(name)),
+        );
       }
       if (Array.isArray(parsed.checkedIn)) {
-        checkedIn = parsed.checkedIn;
+        checkedIn = parsed.checkedIn.filter((name) => KIDS.includes(name));
       }
       if (Array.isArray(parsed.lockedQuarters)) {
         lockedQuarters = new Set(parsed.lockedQuarters);
       }
       if (
+        parsed.version === STATE_VERSION &&
+        Array.isArray(parsed.playerPrefs)
+      ) {
+        parsed.playerPrefs
+          .filter((pref) => KIDS.includes(pref.name))
+          .forEach((pref) => {
+            const player = playerMap[pref.name];
+            if (Array.isArray(pref.preferredPositions)) {
+              player.preferredPositions = pref.preferredPositions.filter(
+                (pos) => ["DEF", "MID", "FWD"].includes(pos),
+              );
+            }
+            if (typeof pref.canPlaySTP === "boolean") {
+              player.canPlaySTP = pref.canPlaySTP;
+            }
+          });
+      }
+      if (
         !gameLineup ||
         !Array.isArray(gameLineup.goalkeepers) ||
-        !Array.isArray(gameLineup.goalkeeperByQuarter)
+        !Array.isArray(gameLineup.goalkeeperByQuarter) ||
+        !Array.isArray(gameLineup.quarters) ||
+        gameLineup.goalkeepers.some((name) => !KIDS.includes(name)) ||
+        gameLineup.quarters.some((q) =>
+          q.some((player) => !KIDS.includes(player.name)),
+        )
       ) {
         gameLineup = null;
       }
@@ -348,19 +389,50 @@ function toggleCMF(name) {
   renderAll();
 }
 
-function renderCMFPicker() {
-  if (!gameLineup) {
-    document.getElementById("cmf-pills").innerHTML = "";
-    return;
+function togglePreferredPosition(name, position) {
+  const player = playerMap[name];
+  if (!player) return;
+  const idx = player.preferredPositions.indexOf(position);
+  if (idx === -1) {
+    player.preferredPositions.push(position);
+  } else {
+    player.preferredPositions.splice(idx, 1);
   }
-  const container = document.getElementById("cmf-pills");
-  container.innerHTML = checkedIn
-    .filter((kid) => gameLineup.goalkeeperByQuarter.some((gk) => gk !== kid))
-    .map((kid) => {
-      const on = centerMidAllowed.has(kid);
-      return `<button class="cmf-pill${on ? " selected" : ""}" onclick="toggleCMF('${kid}')">${kid}</button>`;
-    })
-    .join("");
+  activeFieldQ = 0;
+  gameLineup = generateLineup();
+  saveLineup();
+  renderAll();
+}
+
+function toggleSTP(name) {
+  const player = playerMap[name];
+  if (!player) return;
+  player.canPlaySTP = !player.canPlaySTP;
+  activeFieldQ = 0;
+  gameLineup = generateLineup();
+  saveLineup();
+  renderAll();
+}
+
+function renderPlayersScreen() {
+  const container = document.getElementById("players-view");
+  if (!container) return;
+  container.innerHTML = KIDS.map((name) => {
+    const player = playerMap[name];
+    const cmfOn = centerMidAllowed.has(name);
+    const stpOn = player.canPlaySTP;
+    return `
+<div class="player-pref-card">
+  <div class="player-pref-name">${name}</div>
+  <div class="pref-pills">
+    ${renderPositionPreferenceButton(name, "DEF")}
+    ${renderPositionPreferenceButton(name, "MID")}
+    ${renderPositionPreferenceButton(name, "FWD")}
+    <button class="pref-pill pref-pill-cmf${cmfOn ? " selected" : ""}" onclick="toggleCMF('${name}')">⚡ CMF</button>
+    <button class="pref-pill pref-pill-stp${stpOn ? " selected" : ""}" onclick="toggleSTP('${name}')">🛡️ STP</button>
+  </div>
+</div>`;
+  }).join("");
 }
 
 function pickGK(name) {
@@ -405,7 +477,7 @@ function reshuffle() {
 function resetApp() {
   if (
     !window.confirm(
-      "Clear all check-ins, goalkeeper picks, locks, and saved lineup?",
+      "Clear all check-ins, goalkeeper picks, locks, saved lineup, and player preferences?",
     )
   ) {
     return;
@@ -418,6 +490,11 @@ function resetApp() {
   centerMidAllowed = new Set(
     PLAYERS_DEFAULT.filter((p) => p.canPlayCMF).map((p) => p.name),
   );
+  PLAYER_DEFAULTS_SNAPSHOT.forEach((defaults) => {
+    const player = playerMap[defaults.name];
+    player.preferredPositions = [...defaults.preferredPositions];
+    player.canPlaySTP = defaults.canPlaySTP;
+  });
   checkedIn = [];
   lockedQuarters = new Set();
   swapSelection = null;
@@ -742,13 +819,18 @@ function renderSummary() {
   document.getElementById("summary-view").innerHTML = html;
 }
 
+function renderPositionPreferenceButton(name, position) {
+  const selected = playerMap[name].preferredPositions.includes(position);
+  return `<button class="pref-pill${selected ? " selected" : ""}" onclick="togglePreferredPosition('${name}','${position}')">${position}</button>`;
+}
+
 // ──────────────────────────────────────────
 // RENDER ALL
 // ──────────────────────────────────────────
 function renderAll() {
   renderCheckIn();
+  renderPlayersScreen();
   renderFormationPicker();
-  renderCMFPicker();
   renderGKPicker();
   renderField();
   renderGame();

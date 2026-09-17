@@ -33,10 +33,6 @@
       <!-- Full game table -->
       <div id="screen-game" class="screen">
         <div class="formation-switcher" id="formation-switcher"></div>
-        <div class="cmf-picker">
-          <div class="cmf-picker-label">⚡ Center Mid Eligible</div>
-          <div class="cmf-pills" id="cmf-pills"></div>
-        </div>
         <div class="gk-picker">
           <div class="gk-picker-label">🥅 Choose Up to 2 Goalkeepers</div>
           <div class="gk-pills" id="gk-pills"></div>
@@ -49,6 +45,11 @@
         </div>
       </div>
 
+      <!-- Player preferences -->
+      <div id="screen-players" class="screen">
+        <div id="players-view"></div>
+      </div>
+
       <!-- Summary -->
       <div id="screen-summary" class="screen">
         <div id="summary-view"></div>
@@ -58,6 +59,9 @@
     <nav>
       <button class="nav-btn active" onclick="showScreen('checkin', this)">
         <span class="nav-icon">✅</span><span>Check In</span>
+      </button>
+      <button class="nav-btn" onclick="showScreen('players', this)">
+        <span class="nav-icon">🎯</span><span>Players</span>
       </button>
       <button class="nav-btn" onclick="showScreen('game', this)">
         <span class="nav-icon">📅</span><span>Game</span>

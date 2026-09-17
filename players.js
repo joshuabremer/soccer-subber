@@ -15,76 +15,21 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 const PLAYERS_DEFAULT = [
-  {
-    name: "James",
-    preferredPositions: ["DEF", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: false,
-  },
-  {
-    name: "Lyle",
-    preferredPositions: ["DEF", "MID"],
-    canPlayCMF: false,
-    canPlaySTP: true,
-  },
-  {
-    name: "Andrik",
-    preferredPositions: ["MID", "FWD"],
-    canPlayCMF: true,
-    canPlaySTP: true,
-  },
-  {
-    name: "Owen",
-    preferredPositions: ["DEF", "MID", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: false,
-  },
-  {
-    name: "Emma",
-    preferredPositions: ["MID", "FWD"],
-    canPlayCMF: true,
-    canPlaySTP: true,
-  },
-  {
-    name: "Nora",
-    preferredPositions: ["DEF", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: false,
-  },
-  {
-    name: "Benecio",
-    preferredPositions: ["MID", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: false,
-  },
-  {
-    name: "Noah",
-    preferredPositions: ["DEF", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: true,
-  },
-  {
-    name: "Addie",
-    preferredPositions: ["DEF", "MID", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: true,
-  },
-  {
-    name: "Journe",
-    preferredPositions: ["DEF", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: false,
-  },
-  {
-    name: "Mayson",
-    preferredPositions: ["DEF", "MID", "FWD"],
-    canPlayCMF: true,
-    canPlaySTP: true,
-  },
-  {
-    name: "Extra Player",
-    preferredPositions: ["DEF", "MID", "FWD"],
-    canPlayCMF: false,
-    canPlaySTP: false,
-  },
-];
+  "Elijah",
+  "James",
+  "Addie",
+  "Emma",
+  "Noah",
+  "Walter",
+  "Joe",
+  "Sagan",
+  "Lyle",
+  "Owen",
+  "Frank",
+  "Andrik",
+].map((name) => ({
+  name,
+  preferredPositions: [],
+  canPlayCMF: false,
+  canPlaySTP: false,
+}));

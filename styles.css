@@ -579,27 +579,24 @@ nav {
   border-radius: 50%;
 }
 
-/* ── CMF Picker ── */
-.cmf-picker {
+/* ── Players (preferences) screen ── */
+.player-pref-card {
   background: var(--surface);
   border-radius: 12px;
   padding: 14px;
-  margin-bottom: 12px;
-}
-.cmf-picker-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   margin-bottom: 10px;
 }
-.cmf-pills {
+.player-pref-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 10px;
+}
+.pref-pills {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
 }
-.cmf-pill {
+.pref-pill {
   padding: 7px 14px;
   border-radius: 20px;
   border: 2px solid var(--surface2);
@@ -610,10 +607,20 @@ nav {
   cursor: pointer;
   transition: all 0.15s;
 }
-.cmf-pill.selected {
+.pref-pill.selected {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent);
+}
+.pref-pill-cmf.selected {
   border-color: var(--mid);
   background: rgba(250, 204, 21, 0.15);
   color: var(--mid);
+}
+.pref-pill-stp.selected {
+  border-color: var(--def);
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--def);
 }
 
 /* ── GK Picker ── */
